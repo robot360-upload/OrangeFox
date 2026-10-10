@@ -47,7 +47,27 @@ jobs:
             ca-certificates \
             openssh-client \
             ccache
+            
+      # Install Google's Android repo tool
+      - name: Install Android repo tool
+        shell: bash
+        run: |
+          set -euxo pipefail
 
+          mkdir -p "$HOME/.local/bin"
+
+          curl -fL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/.local/bin/repo"
+
+          chmod +x "$HOME/.local/bin/repo"
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+
+          echo "========== Verify repo installation =========="
+          command -v repo
+          repo --version
       # 3. Check available resources.
       - name: Check runner resources
         run: |
