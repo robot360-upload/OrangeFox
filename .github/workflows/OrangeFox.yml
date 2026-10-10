@@ -1,39 +1,31 @@
 name: Build OrangeFox Recovery - GTA4L
-
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: orangefox-gta4l
   cancel-in-progress: false
-
 jobs:
   build:
     name: Sync and Build OrangeFox
     runs-on: ubuntu-22.04
     timeout-minutes: 360
-
     env:
       FOX_BRANCH: "12.1"
       FOX_BUILD_DEVICE: gta4l
       FOX_DIR: ${{ github.workspace }}/fox_12.1
       SYNC_DIR: ${{ github.workspace }}/OrangeFox_sync/sync
-
     steps:
       # 1. Checkout the repository containing this workflow.
       - name: Checkout workflow repository
         uses: actions/checkout@v4
-
       # 2. Install basic dependencies.
       - name: Install dependencies
+        shell: bash
         run: |
           set -euxo pipefail
-
           sudo apt-get update
-
           sudo apt-get install -y \
             git \
             git-lfs \
@@ -47,154 +39,119 @@ jobs:
             ca-certificates \
             openssh-client \
             ccache
-            
-      # Install Google's Android repo tool
+      # 3. Install Google's Android repo tool.
       - name: Install Android repo tool
         shell: bash
         run: |
           set -euxo pipefail
-
           mkdir -p "$HOME/.local/bin"
-
           curl -fL \
             https://storage.googleapis.com/git-repo-downloads/repo \
             -o "$HOME/.local/bin/repo"
-
           chmod +x "$HOME/.local/bin/repo"
-
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$PATH"
-
           echo "========== Verify repo installation =========="
           command -v repo
           repo --version
-      # 3. Check available resources.
+      # 4. Check available resources.
       - name: Check runner resources
+        shell: bash
         run: |
           set -euxo pipefail
-
           echo "========== Disk space =========="
           df -h
-
           echo "========== Memory =========="
           free -h
-
           echo "========== CPU cores =========="
           nproc
-
-      # 4. Clone the OrangeFox sync repository.
+      # 5. Clone the OrangeFox sync repository.
       - name: Clone OrangeFox sync
+        shell: bash
         run: |
           set -euxo pipefail
-
           mkdir -p "$(dirname "$SYNC_DIR")"
-
           git clone \
             https://gitlab.com/OrangeFox/sync.git \
             "$SYNC_DIR"
-
           cd "$SYNC_DIR"
-
           echo "Sync repository commit:"
           git log -1 --oneline
-
-      # 5. Locate the vendor/TWRP patch.
+      # 6. Locate the vendor/TWRP patch.
       - name: Check vendor TWRP patch
+        shell: bash
         run: |
           set -euxo pipefail
-
           cd "$SYNC_DIR"
-
           PATCH_NAME="patch-vendor-twrp-fox_${FOX_BRANCH}.diff"
           EXPECTED_PATH="$SYNC_DIR/$PATCH_NAME"
-
           PATCH_PATH="$(find "$SYNC_DIR" \
             -maxdepth 4 \
             -type f \
             -name "$PATCH_NAME" \
             -print -quit)"
-
           if [ -z "$PATCH_PATH" ]; then
             echo "::error::Missing patch: $PATCH_NAME"
-
             find "$SYNC_DIR" \
               -maxdepth 4 \
               -type f \
               -name '*.diff' \
               -print
-
             exit 1
           fi
-
           echo "Found patch: $PATCH_PATH"
-
           if [ "$PATCH_PATH" != "$EXPECTED_PATH" ]; then
             ln -s "$PATCH_PATH" "$EXPECTED_PATH"
           fi
-
           ls -l "$EXPECTED_PATH"
-
-      # 6. Synchronize OrangeFox sources.
+      # 7. Synchronize OrangeFox sources.
       - name: Synchronize OrangeFox 12.1
+        shell: bash
         run: |
           set -euxo pipefail
-
           cd "$SYNC_DIR"
-
           ./orangefox_sync.sh \
             --branch "$FOX_BRANCH" \
             --path "$FOX_DIR"
-
-      # 7. Verify source synchronization.
+      # 8. Verify source synchronization.
       - name: Verify synchronized sources
+        shell: bash
         run: |
           set -euxo pipefail
-
           test -f "$FOX_DIR/build/envsetup.sh"
-
           echo "OrangeFox sources are present."
           du -sh "$FOX_DIR"
-
           echo "Available disk space:"
           df -h "$RUNNER_TEMP"
-
-      # 8. Clone the device-specific tree.
+      # 9. Clone the GTA4L device tree.
       - name: Clone GTA4L device tree
+        shell: bash
         run: |
           set -euxo pipefail
-
           cd "$FOX_DIR"
-
           mkdir -p device/samsung
-
           git clone \
             --branch lineage-23.2 \
             https://github.com/LineageOS/android_device_samsung_gta4l.git \
             device/samsung/gta4l
-
           git -C device/samsung/gta4l log -1 --oneline
-
-      # 9. Clone the common device tree.
+      # 10. Clone the GTA4L common device tree.
       - name: Clone GTA4L common device tree
+        shell: bash
         run: |
           set -euxo pipefail
-
           cd "$FOX_DIR"
-
           git clone \
             --branch lineage-23.2 \
             https://github.com/LineageOS/android_device_samsung_gta4l-common.git \
             device/samsung/gta4l-common
-
           git -C device/samsung/gta4l-common log -1 --oneline
-
-      # 10. Print dependency declarations for troubleshooting.
+      # 11. Inspect declared device dependencies.
       - name: Inspect device tree dependencies
+        shell: bash
         run: |
           set -euxo pipefail
-
           cd "$FOX_DIR"
-
           for FILE in \
             device/samsung/gta4l/lineage.dependencies \
             device/samsung/gta4l-common/lineage.dependencies
@@ -204,18 +161,55 @@ jobs:
               cat "$FILE"
             fi
           done
-
-      - name: Inspect gta4l product configuration
+      # 12. Create and register the GTA4L recovery product.
+      - name: Install GTA4L recovery product
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEVICE_DIR="$FOX_DIR/device/samsung/gta4l"
+          PRODUCT_FILE="$DEVICE_DIR/AndroidProducts.mk"
+          RECOVERY_PRODUCT="$DEVICE_DIR/twrp_gta4l.mk"
+          echo "========== Check device tree =========="
+          test -f "$PRODUCT_FILE"
+          test -f "$DEVICE_DIR/device.mk"
+          test -f "$DEVICE_DIR/BoardConfig.mk"
+          echo "========== Create recovery product =========="
+          cat > "$RECOVERY_PRODUCT" <<'EOF'
+          #
+          # GTA4L OrangeFox recovery product
+          # SPDX-License-Identifier: Apache-2.0
+          #
+          PRODUCT_RELEASE_NAME := gta4l
+          $(call inherit-product, vendor/fox/config/common.mk)
+          $(call inherit-product, device/samsung/gta4l/device.mk)
+          PRODUCT_DEVICE := gta4l
+          PRODUCT_NAME := twrp_gta4l
+          PRODUCT_BRAND := samsung
+          PRODUCT_MODEL := SM-T505
+          PRODUCT_MANUFACTURER := samsung
+          PRODUCT_GMS_CLIENTID_BASE := android-samsung
+          EOF
+          echo "========== Register recovery product =========="
+          if ! grep -q 'twrp_gta4l.mk' "$PRODUCT_FILE"; then
+            cat >> "$PRODUCT_FILE" <<'EOF'
+          # OrangeFox recovery product
+          PRODUCT_MAKEFILES += \
+              $(LOCAL_DIR)/twrp_gta4l.mk
+          COMMON_LUNCH_CHOICES += \
+              twrp_gta4l-eng
+          EOF
+          fi
+          echo "========== AndroidProducts.mk =========="
+          cat "$PRODUCT_FILE"
+          echo "========== twrp_gta4l.mk =========="
+          cat "$RECOVERY_PRODUCT"
+      # 13. Inspect product configuration.
+      - name: Inspect GTA4L product configuration
         shell: bash
         run: |
           set -eo pipefail
-
-          cd "$GITHUB_WORKSPACE/fox_12.1"
-
-          echo "========== AndroidProducts.mk =========="
-          cat device/samsung/gta4l/AndroidProducts.mk
-
-          echo "========== Device tree product files =========="
+          cd "$FOX_DIR"
+          echo "========== Device product files =========="
           find device/samsung/gta4l \
             -maxdepth 2 \
             -type f \
@@ -224,7 +218,6 @@ jobs:
                -o -name '*orangefox*.mk' \
                -o -name 'AndroidProducts.mk' \) \
             -print
-
           echo "========== Common tree product files =========="
           find device/samsung/gta4l-common \
             -maxdepth 2 \
@@ -234,7 +227,6 @@ jobs:
                -o -name '*orangefox*.mk' \
                -o -name 'AndroidProducts.mk' \) \
             -print
-
           echo "========== Product definitions =========="
           grep -R -n -E \
             'PRODUCT_NAME[[:space:]]*[:+]?=|COMMON_LUNCH_CHOICES|PRODUCT_MAKEFILES' \
@@ -242,62 +234,50 @@ jobs:
             device/samsung/gta4l-common \
             --include='*.mk' \
             --include='AndroidProducts.mk' || true
-      # 11. Attempt the OrangeFox build.
+      # 14. Build OrangeFox recovery.
       - name: Build OrangeFox Recovery
         shell: bash
         run: |
-          set -xo pipefail
-          cd "$GITHUB_WORKSPACE/fox_12.1"
-
+          set -eo pipefail
+          cd "$FOX_DIR"
           export ALLOW_MISSING_DEPENDENCIES=true
           export FOX_BUILD_DEVICE=gta4l
           export LC_ALL=C
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
-
           echo "========== Loading build environment =========="
-          set +e
           source build/envsetup.sh
-          ENVSETUP_STATUS=$?
-          set -e
-
-          echo "envsetup.sh exit status: $ENVSETUP_STATUS"
-
           echo "========== Checking lunch command =========="
           type lunch
-
           echo "========== Selecting build target =========="
           lunch twrp_gta4l-eng
-
           echo "========== Building recovery =========="
-          mka adbd recoveryimage
-
-      # 12. Upload recovery image if the build succeeded.
-      - name: Upload recovery image
-        if: success()
+          mka adbd recoveryimage 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+      # 15. Upload recovery image and build log.
+      - name: Upload recovery artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: OrangeFox-GTA4L-12.1
           path: |
-            ${{ runner.temp }}/fox_12.1/out/target/product/gta4l/*recovery*.img
-            ${{ runner.temp }}/fox_12.1/out/target/product/gta4l/OrangeFox*.img
+            ${{ github.workspace }}/fox_12.1/out/target/product/gta4l/*recovery*.img
+            ${{ github.workspace }}/fox_12.1/out/target/product/gta4l/OrangeFox*.img
+            ${{ github.workspace }}/build.log
           if-no-files-found: warn
           retention-days: 7
-
-      # 13. Show diagnostics even if an earlier step failed.
+      # 16. Show diagnostics even if an earlier step failed.
       - name: Final diagnostics
         if: always()
+        shell: bash
         run: |
           echo "========== Final diagnostics =========="
-
           df -h "$RUNNER_TEMP"
-
           if [ -d "$FOX_DIR" ]; then
             echo "OrangeFox source directory exists."
-
             for FILE in \
               "$FOX_DIR/device/samsung/gta4l/BoardConfig.mk" \
               "$FOX_DIR/device/samsung/gta4l/AndroidProducts.mk" \
+              "$FOX_DIR/device/samsung/gta4l/twrp_gta4l.mk" \
               "$FOX_DIR/device/samsung/gta4l-common/BoardConfigCommon.mk"
             do
               if [ -f "$FILE" ]; then
@@ -306,7 +286,6 @@ jobs:
                 echo "NOT FOUND: $FILE"
               fi
             done
-
             if [ -d "$FOX_DIR/out" ]; then
               echo "Build output directory exists."
               du -sh "$FOX_DIR/out" || true
