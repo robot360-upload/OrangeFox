@@ -235,28 +235,55 @@ jobs:
             --include='*.mk' \
             --include='AndroidProducts.mk' || true
       # 14. Build OrangeFox recovery.
-      - name: Build OrangeFox Recovery
+      - name: Diagnose and Build OrangeFox Recovery
         shell: bash
         run: |
           set -eo pipefail
+
           cd "$FOX_DIR"
+
           export ALLOW_MISSING_DEPENDENCIES=true
           export FOX_BUILD_DEVICE=gta4l
           export LC_ALL=C
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
-          echo "========== Checking source files =========="
+
+          DEBUG_LOG="$GITHUB_WORKSPACE/envsetup-debug.log"
+
+          echo "========== Verify required files =========="
           test -f build/envsetup.sh
           test -f device/samsung/gta4l/AndroidProducts.mk
           test -f device/samsung/gta4l/twrp_gta4l.mk
-          echo "========== Loading build environment =========="
-          source build/envsetup.sh 2>&1 | tee "$GITHUB_WORKSPACE/envsetup.log"
-          echo "========== Checking lunch command =========="
-          type lunch
-          echo "========== Selecting build target =========="
-          lunch twrp_gta4l-eng 2>&1 | tee "$GITHUB_WORKSPACE/lunch.log"
-          echo "========== Building recovery =========="
-          mka adbd recoveryimage 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+          echo "========== Inspect environment setup =========="
+          ls -l build/envsetup.sh
+          head -n 40 build/envsetup.sh
+
+          echo "========== Trace environment setup =========="
+
+          set +e
+          bash -x -c 'source "$FOX_DIR/build/envsetup.sh"' \
+            > "$DEBUG_LOG" 2>&1
+          ENV_STATUS=$?
+          set -e
+
+          echo "envsetup exit status: $ENV_STATUS"
+          echo "========== Last 200 diagnostic lines =========="
+          tail -n 200 "$DEBUG_LOG"
+
+          if [ "$ENV_STATUS" -ne 0 ]; then
+            echo "::error::envsetup.sh failed; inspect envsetup-debug.log"
+            exit "$ENV_STATUS"
+          fi
+
+          echo "========== Select recovery product =========="
+
+          source build/envsetup.sh
+          lunch twrp_gta4l-eng
+
+          echo "========== Build recovery =========="
+          mka adbd recoveryimage 2>&1 |
+            tee "$GITHUB_WORKSPACE/build.log"
       # 15. Upload recovery image and build log.
       - name: Upload recovery artifacts
         if: always()
