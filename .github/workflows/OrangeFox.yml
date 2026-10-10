@@ -205,6 +205,43 @@ jobs:
             fi
           done
 
+      - name: Inspect gta4l product configuration
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          cd "$GITHUB_WORKSPACE/fox_12.1"
+
+          echo "========== AndroidProducts.mk =========="
+          cat device/samsung/gta4l/AndroidProducts.mk
+
+          echo "========== Device tree product files =========="
+          find device/samsung/gta4l \
+            -maxdepth 2 \
+            -type f \
+            \( -name '*twrp*.mk' \
+               -o -name '*lineage*.mk' \
+               -o -name '*orangefox*.mk' \
+               -o -name 'AndroidProducts.mk' \) \
+            -print
+
+          echo "========== Common tree product files =========="
+          find device/samsung/gta4l-common \
+            -maxdepth 2 \
+            -type f \
+            \( -name '*twrp*.mk' \
+               -o -name '*lineage*.mk' \
+               -o -name '*orangefox*.mk' \
+               -o -name 'AndroidProducts.mk' \) \
+            -print
+
+          echo "========== Product definitions =========="
+          grep -R -n -E \
+            'PRODUCT_NAME[[:space:]]*[:+]?=|COMMON_LUNCH_CHOICES|PRODUCT_MAKEFILES' \
+            device/samsung/gta4l \
+            device/samsung/gta4l-common \
+            --include='*.mk' \
+            --include='AndroidProducts.mk' || true
       # 11. Attempt the OrangeFox build.
       - name: Build OrangeFox Recovery
         shell: bash
