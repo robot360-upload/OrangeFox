@@ -209,7 +209,7 @@ jobs:
       - name: Build OrangeFox recovery
         shell: bash
         run: |
-          set -euxo pipefail
+          set -exo pipefail
 
           cd "$FOX_DIR"
 
