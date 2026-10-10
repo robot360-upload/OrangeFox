@@ -1,0 +1,53 @@
+name: Sync and Push OrangeFox Sources
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: orangefox-12.1
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git curl repo python3 python-is-python3 \
+            rsync bc bison build-essential ccache \
+            flex g++ gcc libssl-dev unzip zip
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Clone OrangeFox sync scripts
+        run: |
+          mkdir -p "$RUNNER_TEMP/OrangeFox_sync"
+          cd "$RUNNER_TEMP/OrangeFox_sync"
+          git clone https://gitlab.com/OrangeFox/sync.git
+      - name: Synchronize OrangeFox sources
+        run: |
+          cd "$RUNNER_TEMP/OrangeFox_sync/sync"
+          ./orangefox_sync.sh \
+            --branch 12.1 \
+            --path "$RUNNER_TEMP/fox_12.1"
+      - name: Copy synchronized sources
+        run: |
+          rsync -a \
+            --exclude='.git' \
+            "$RUNNER_TEMP/fox_12.1/" \
+            "$GITHUB_WORKSPACE/"
+      - name: Commit and push sources
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Sync OrangeFox 12.1 sources"
+          git push origin HEAD:orangefox-12.1
