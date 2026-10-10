@@ -210,7 +210,7 @@ jobs:
         shell: bash
         run: |
           set -xo pipefail
-          cd "$RUNNER_TEMP/fox_12.1"
+          cd "$GITHUB_WORKSPACE/fox_12.1"
 
           export ALLOW_MISSING_DEPENDENCIES=true
           export FOX_BUILD_DEVICE=gta4l
