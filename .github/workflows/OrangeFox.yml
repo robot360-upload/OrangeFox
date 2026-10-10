@@ -206,43 +206,34 @@ jobs:
           done
 
       # 11. Attempt the OrangeFox build.
-      - name: Build OrangeFox recovery
+      - name: Build OrangeFox Recovery
         shell: bash
         run: |
-          set -exo pipefail
-
-          cd "$FOX_DIR"
+          set -xo pipefail
+          cd "$RUNNER_TEMP/fox_12.1"
 
           export ALLOW_MISSING_DEPENDENCIES=true
           export FOX_BUILD_DEVICE=gta4l
           export LC_ALL=C
-
-          # Enable compilation cache for this job.
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
 
-          echo "========== Resources before build =========="
-          df -h "$RUNNER_TEMP"
-          free -h
-          nproc
-
           echo "========== Loading build environment =========="
+          set +e
           source build/envsetup.sh
+          ENVSETUP_STATUS=$?
+          set -e
 
-          echo "========== Selecting GTA4L target =========="
+          echo "envsetup.sh exit status: $ENVSETUP_STATUS"
+
+          echo "========== Checking lunch command =========="
+          type lunch
+
+          echo "========== Selecting build target =========="
           lunch twrp_gta4l-eng
 
-          echo "========== Building recovery image =========="
+          echo "========== Building recovery =========="
           mka adbd recoveryimage
-
-          echo "========== Build finished =========="
-
-          echo "========== Searching for output images =========="
-          find out/target/product -type f \
-            \( \
-              -name '*recovery*.img' \
-              -o -name 'OrangeFox*.img' \
-            \) -print
 
       # 12. Upload recovery image if the build succeeded.
       - name: Upload recovery image
