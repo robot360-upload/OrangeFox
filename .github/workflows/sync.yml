@@ -29,6 +29,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/OrangeFox_sync"
           cd "$RUNNER_TEMP/OrangeFox_sync"
           git clone https://gitlab.com/OrangeFox/sync.git
+      - name: Fix vendor TWRP patch path
+        run: |
+          cd "$RUNNER_TEMP/OrangeFox_sync/sync"
+          test -f patches/patch-vendor-twrp-fox_12.1.diff
+          ln -s patches/patch-vendor-twrp-fox_12.1.diff patch-vendor-twrp-fox_12.1.diff
       - name: Synchronize OrangeFox sources
         run: |
           cd "$RUNNER_TEMP/OrangeFox_sync/sync"
