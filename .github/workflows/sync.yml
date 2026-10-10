@@ -1,60 +1,268 @@
-name: Sync and Push OrangeFox Sources
+name: Build OrangeFox Recovery - GTA4L
+
 on:
   workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: orangefox-gta4l
+  cancel-in-progress: false
+
 jobs:
-  sync:
+  build:
+    name: Sync and Build OrangeFox
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+
+    env:
+      FOX_BRANCH: "12.1"
+      FOX_BUILD_DEVICE: gta4l
+      FOX_DIR: ${{ runner.temp }}/fox_12.1
+      SYNC_DIR: ${{ runner.temp }}/OrangeFox_sync/sync
+
     steps:
-      - name: Checkout repository
+      # 1. Checkout the repository containing this workflow.
+      - name: Checkout workflow repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+
+      # 2. Install basic dependencies.
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git curl repo python3 python-is-python3 \
-            rsync bc bison build-essential ccache \
-            flex g++ gcc libssl-dev unzip zip
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-      - name: Clone OrangeFox sync scripts
-        run: |
-          mkdir -p "$RUNNER_TEMP/OrangeFox_sync"
-          cd "$RUNNER_TEMP/OrangeFox_sync"
-          git clone https://gitlab.com/OrangeFox/sync.git
-      - name: Fix vendor TWRP patch path
-        run: |
-          cd "$RUNNER_TEMP/OrangeFox_sync/sync"
-          test -f patches/patch-vendor-twrp-fox_12.1.diff
-          ln -s patches/patch-vendor-twrp-fox_12.1.diff patch-vendor-twrp-fox_12.1.diff
-      - name: Synchronize OrangeFox sources
-        run: |
-          cd "$RUNNER_TEMP/OrangeFox_sync/sync"
-          ./orangefox_sync.sh \
-            --branch 12.1 \
-            --path "$RUNNER_TEMP/fox_12.1"
-      - name: Copy synchronized sources
-        run: |
-          rsync -a \
-            --exclude='.git' \
-            "$RUNNER_TEMP/fox_12.1/" \
-            "$GITHUB_WORKSPACE/"
-      - name: Commit and push sources
-        run: |
-          git checkout -B orangefox-12.1
-          git add -A
+          set -euxo pipefail
 
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            git-lfs \
+            curl \
+            wget \
+            python3 \
+            python-is-python3 \
+            rsync \
+            unzip \
+            zip \
+            ca-certificates \
+            openssh-client \
+            ccache
+
+      # 3. Check available resources.
+      - name: Check runner resources
+        run: |
+          set -euxo pipefail
+
+          echo "========== Disk space =========="
+          df -h
+
+          echo "========== Memory =========="
+          free -h
+
+          echo "========== CPU cores =========="
+          nproc
+
+      # 4. Clone the OrangeFox sync repository.
+      - name: Clone OrangeFox sync
+        run: |
+          set -euxo pipefail
+
+          mkdir -p "$RUNNER_TEMP/OrangeFox_sync"
+
+          git clone \
+            https://gitlab.com/OrangeFox/sync.git \
+            "$SYNC_DIR"
+
+          cd "$SYNC_DIR"
+
+          echo "Sync repository commit:"
+          git log -1 --oneline
+
+      # 5. Locate the vendor/TWRP patch.
+      - name: Check vendor TWRP patch
+        run: |
+          set -euxo pipefail
+
+          cd "$SYNC_DIR"
+
+          PATCH_NAME="patch-vendor-twrp-fox_${FOX_BRANCH}.diff"
+          EXPECTED_PATH="$SYNC_DIR/$PATCH_NAME"
+
+          PATCH_PATH="$(find "$SYNC_DIR" \
+            -maxdepth 4 \
+            -type f \
+            -name "$PATCH_NAME" \
+            -print -quit)"
+
+          if [ -z "$PATCH_PATH" ]; then
+            echo "::error::Missing patch: $PATCH_NAME"
+
+            find "$SYNC_DIR" \
+              -maxdepth 4 \
+              -type f \
+              -name '*.diff' \
+              -print
+
+            exit 1
           fi
 
-          git commit -m "Sync OrangeFox 12.1 sources"
-          git push origin orangefox-12.1
+          echo "Found patch: $PATCH_PATH"
+
+          if [ "$PATCH_PATH" != "$EXPECTED_PATH" ]; then
+            ln -s "$PATCH_PATH" "$EXPECTED_PATH"
+          fi
+
+          ls -l "$EXPECTED_PATH"
+
+      # 6. Synchronize OrangeFox sources.
+      - name: Synchronize OrangeFox 12.1
+        run: |
+          set -euxo pipefail
+
+          cd "$SYNC_DIR"
+
+          ./orangefox_sync.sh \
+            --branch "$FOX_BRANCH" \
+            --path "$FOX_DIR"
+
+      # 7. Verify source synchronization.
+      - name: Verify synchronized sources
+        run: |
+          set -euxo pipefail
+
+          test -f "$FOX_DIR/build/envsetup.sh"
+
+          echo "OrangeFox sources are present."
+          du -sh "$FOX_DIR"
+
+          echo "Available disk space:"
+          df -h "$RUNNER_TEMP"
+
+      # 8. Clone the device-specific tree.
+      - name: Clone GTA4L device tree
+        run: |
+          set -euxo pipefail
+
+          cd "$FOX_DIR"
+
+          mkdir -p device/samsung
+
+          git clone \
+            --branch lineage-23.2 \
+            https://github.com/LineageOS/android_device_samsung_gta4l.git \
+            device/samsung/gta4l
+
+          git -C device/samsung/gta4l log -1 --oneline
+
+      # 9. Clone the common device tree.
+      - name: Clone GTA4L common device tree
+        run: |
+          set -euxo pipefail
+
+          cd "$FOX_DIR"
+
+          git clone \
+            --branch lineage-23.2 \
+            https://github.com/LineageOS/android_device_samsung_gta4l-common.git \
+            device/samsung/gta4l-common
+
+          git -C device/samsung/gta4l-common log -1 --oneline
+
+      # 10. Print dependency declarations for troubleshooting.
+      - name: Inspect device tree dependencies
+        run: |
+          set -euxo pipefail
+
+          cd "$FOX_DIR"
+
+          for FILE in \
+            device/samsung/gta4l/lineage.dependencies \
+            device/samsung/gta4l-common/lineage.dependencies
+          do
+            if [ -f "$FILE" ]; then
+              echo "========== $FILE =========="
+              cat "$FILE"
+            fi
+          done
+
+      # 11. Attempt the OrangeFox build.
+      - name: Build OrangeFox recovery
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "$FOX_DIR"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export FOX_BUILD_DEVICE=gta4l
+          export LC_ALL=C
+
+          # Enable compilation cache for this job.
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+
+          echo "========== Resources before build =========="
+          df -h "$RUNNER_TEMP"
+          free -h
+          nproc
+
+          echo "========== Loading build environment =========="
+          source build/envsetup.sh
+
+          echo "========== Selecting GTA4L target =========="
+          lunch twrp_gta4l-eng
+
+          echo "========== Building recovery image =========="
+          mka adbd recoveryimage
+
+          echo "========== Build finished =========="
+
+          echo "========== Searching for output images =========="
+          find out/target/product -type f \
+            \( \
+              -name '*recovery*.img' \
+              -o -name 'OrangeFox*.img' \
+            \) -print
+
+      # 12. Upload recovery image if the build succeeded.
+      - name: Upload recovery image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-GTA4L-12.1
+          path: |
+            ${{ runner.temp }}/fox_12.1/out/target/product/gta4l/*recovery*.img
+            ${{ runner.temp }}/fox_12.1/out/target/product/gta4l/OrangeFox*.img
+          if-no-files-found: warn
+          retention-days: 7
+
+      # 13. Show diagnostics even if an earlier step failed.
+      - name: Final diagnostics
+        if: always()
+        run: |
+          echo "========== Final diagnostics =========="
+
+          df -h "$RUNNER_TEMP"
+
+          if [ -d "$FOX_DIR" ]; then
+            echo "OrangeFox source directory exists."
+
+            for FILE in \
+              "$FOX_DIR/device/samsung/gta4l/BoardConfig.mk" \
+              "$FOX_DIR/device/samsung/gta4l/AndroidProducts.mk" \
+              "$FOX_DIR/device/samsung/gta4l-common/BoardConfigCommon.mk"
+            do
+              if [ -f "$FILE" ]; then
+                echo "FOUND: $FILE"
+              else
+                echo "NOT FOUND: $FILE"
+              fi
+            done
+
+            if [ -d "$FOX_DIR/out" ]; then
+              echo "Build output directory exists."
+              du -sh "$FOX_DIR/out" || true
+            fi
+          else
+            echo "OrangeFox source directory does not exist."
+          fi
