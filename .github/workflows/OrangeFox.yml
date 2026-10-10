@@ -245,12 +245,16 @@ jobs:
           export LC_ALL=C
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
+          echo "========== Checking source files =========="
+          test -f build/envsetup.sh
+          test -f device/samsung/gta4l/AndroidProducts.mk
+          test -f device/samsung/gta4l/twrp_gta4l.mk
           echo "========== Loading build environment =========="
-          source build/envsetup.sh
+          source build/envsetup.sh 2>&1 | tee "$GITHUB_WORKSPACE/envsetup.log"
           echo "========== Checking lunch command =========="
           type lunch
           echo "========== Selecting build target =========="
-          lunch twrp_gta4l-eng
+          lunch twrp_gta4l-eng 2>&1 | tee "$GITHUB_WORKSPACE/lunch.log"
           echo "========== Building recovery =========="
           mka adbd recoveryimage 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
       # 15. Upload recovery image and build log.
