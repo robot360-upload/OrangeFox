@@ -11,7 +11,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: orangefox-12.1
           fetch-depth: 0
       - name: Install dependencies
         run: |
@@ -44,10 +43,13 @@ jobs:
             "$GITHUB_WORKSPACE/"
       - name: Commit and push sources
         run: |
+          git checkout -B orangefox-12.1
           git add -A
+
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
+
           git commit -m "Sync OrangeFox 12.1 sources"
-          git push origin HEAD:orangefox-12.1
+          git push origin orangefox-12.1
