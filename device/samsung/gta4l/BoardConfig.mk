@@ -1,98 +1,39 @@
-
-
-
-
-SPDX-License-Identifier: Apache-2.0
-
-Copyright (C) 2026 OrangeFox Recovery Project
+#
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 GTA4L OrangeFox contributors
+#
+# Device-specific settings for Samsung Galaxy Tab A7 LTE (SM-T505).
+# Shared SM6115/Bengal kernel and verified boot-image parameters are inherited
+# from the current LineageOS gta4l-common tree; do not duplicate them here.
+#
 
 DEVICE_PATH := device/samsung/gta4l
-COMMON_PATH := device/samsung/gta4l-common
 
-Architecture
+-include device/samsung/gta4l-common/BoardConfigCommon.mk
 
-TARGET_ARCH := arm64
-TARGET_ARCH_VARIANT := armv8-a
-TARGET_CPU_ABI := arm64-v8a
-TARGET_CPU_VARIANT := generic
-TARGET_CPU_VARIANT_RUNTIME := cortex-a75
-
-TARGET_2ND_ARCH := arm
-TARGET_2ND_ARCH_VARIANT := armv8-a
-TARGET_2ND_CPU_ABI := armeabi-v7a
-TARGET_2ND_CPU_ABI2 := armeabi
-TARGET_2ND_CPU_VARIANT := generic
-TARGET_2ND_CPU_VARIANT_RUNTIME := cortex-a75
-
-Platform
-
-TARGET_BOARD_PLATFORM := bengal
-TARGET_BOARD_PLATFORM_GPU := qcom-adreno610
-TARGET_BOOTLOADER_BOARD_NAME := bengal
+# Device identity
+TARGET_OTA_ASSERT_DEVICE := gta4l
 TARGET_BOARD_NAME := P85943AA1
 TARGET_BOOTIMAGE_BOARD_NAME := SRPTC24A004
-TARGET_NO_BOOTLOADER := true
-TARGET_SCREEN_DENSITY := 240
 
-Kernel
+# The v2 boot/recovery headers report board string SRPTC24A004.
+BOARD_MKBOOTIMG_ARGS += --board $(TARGET_BOOTIMAGE_BOARD_NAME)
 
-TARGET_KERNEL_SOURCE := kernel/samsung/sm6115
-TARGET_KERNEL_CONFIG := 
-vendor/bengal-perf_defconfig 
-vendor/gta4l-common.config
-TARGET_KERNEL_ARCH := arm64
-TARGET_KERNEL_NO_GCC := true
+# Dynamic partition sizes from the current LineageOS gta4l device tree.
+BOARD_GTA4L_DYNAMIC_PARTITIONS_SIZE := 5750390784
+BOARD_SUPER_PARTITION_SIZE := 5754585088
 
-BOARD_KERNEL_IMAGE_NAME := Image.gz
-BOARD_BOOT_HEADER_VERSION := 2
-BOARD_KERNEL_BASE := 0x00000000
-BOARD_KERNEL_OFFSET := 0x00008000
-BOARD_KERNEL_PAGESIZE := 4096
-BOARD_KERNEL_TAGS_OFFSET := 0x01E00000
-BOARD_RAMDISK_OFFSET := 0x20000000
-BOARD_DTB_OFFSET := 0x01F00000
-
-BOARD_KERNEL_CMDLINE := console=ttyMSM0,115200n8
-BOARD_KERNEL_CMDLINE += earlycon=msm_geni_serial,0x4a90000
-BOARD_KERNEL_CMDLINE += androidboot.console=ttyMSM0
-BOARD_KERNEL_CMDLINE += androidboot.hardware=qcom
-BOARD_KERNEL_CMDLINE += androidboot.memcg=1
-BOARD_KERNEL_CMDLINE += lpm_levels.sleep_disabled=1
-BOARD_KERNEL_CMDLINE += video=vfb:640x400,bpp=32,memsize=3072000
-BOARD_KERNEL_CMDLINE += msm_rtb.filter=0x237
-BOARD_KERNEL_CMDLINE += service_locator.enable=1
-BOARD_KERNEL_CMDLINE += swiotlb=2048
-BOARD_KERNEL_CMDLINE += loop.max_part=7
-BOARD_KERNEL_CMDLINE += firmware_class.path=/vendor/firmware_mnt/image
-
-BOARD_INCLUDE_DTB_IN_BOOTIMG := true
-BOARD_KERNEL_SEPARATED_DTBO := true
-
-BOARD_MKBOOTIMG_ARGS += –base $(BOARD_KERNEL_BASE)
-BOARD_MKBOOTIMG_ARGS += –kernel_offset $(BOARD_KERNEL_OFFSET)
-BOARD_MKBOOTIMG_ARGS += –ramdisk_offset $(BOARD_RAMDISK_OFFSET)
-BOARD_MKBOOTIMG_ARGS += –tags_offset $(BOARD_KERNEL_TAGS_OFFSET)
-BOARD_MKBOOTIMG_ARGS += –dtb_offset $(BOARD_DTB_OFFSET)
-BOARD_MKBOOTIMG_ARGS += –pagesize $(BOARD_KERNEL_PAGESIZE)
-BOARD_MKBOOTIMG_ARGS += –header_version $(BOARD_BOOT_HEADER_VERSION)
-BOARD_MKBOOTIMG_ARGS += –board $(TARGET_BOOTIMAGE_BOARD_NAME)
-
-Partitions
-
-BOARD_FLASH_BLOCK_SIZE := 262144
-BOARD_BOOTIMAGE_PARTITION_SIZE := 100663296
-BOARD_RECOVERYIMAGE_PARTITION_SIZE := 103546880
-BOARD_DTBOIMG_PARTITION_SIZE := 25165824
-
-Recovery
-
-BOARD_INCLUDE_RECOVERY_DTBO := true
-TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888
-TARGET_RECOVERY_DEFAULT_ROTATION := ROTATION_LEFT
-TARGET_RECOVERY_DEFAULT_TOUCH_ROTATION := ROTATION_RIGHT
+# Use the recovery-specific TWRP/OrangeFox fstab, not Android fs_mgr fstab.
 TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/recovery.fstab
 
-Filesystems
-
-TARGET_USERIMAGES_USE_EXT4 := true
-TARGET_USERIMAGES_USE_F2FS := true
+# Verified from boot.img and recovery.img:
+#   header version       = 2
+#   page size            = 4096
+#   kernel load address  = 0x00008000 (kernel offset)
+#   ramdisk load address = 0x20000000 (ramdisk offset)
+#   tags address         = 0x01E00000
+#   DTB load address     = 0x01F00000
+# The common BoardConfigCommon.mk already defines these values, along with
+# BOARD_KERNEL_IMAGE_NAME := Image.gz, BOARD_INCLUDE_DTB_IN_BOOTIMG := true,
+# BOARD_INCLUDE_RECOVERY_DTBO := true, and BOARD_KERNEL_SEPARATED_DTBO := true.
+# Keep those inherited definitions in one place to avoid conflicting args.
