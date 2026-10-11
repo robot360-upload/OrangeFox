@@ -1,18 +1,34 @@
-/boot                   emmc     /dev/block/bootdevice/by-name/boot                        flags=display=boot
-/recovery               emmc     /dev/block/bootdevice/by-name/recovery                    flags=display=recovery
-/system                 ext4     system                                                    flags=display=system;logical
-/system                 f2fs     system                                                    flags=display=system;logical
-/product                ext4     product                                                   flags=display=product;logical
-/vendor                 ext4     vendor                                                    flags=display=vendor;logical
-/odm                    ext4     odm                                                       flags=display=odm;logical
-/prism                  ext4     /dev/block/platform/soc/4744000.sdhci/by-name/prism       flags=display=prism
-/optics                 ext4     /dev/block/platform/soc/4744000.sdhci/by-name/optics      flags=display=optics
-/cache                  ext4     /dev/block/bootdevice/by-name/cache                       flags=display=cache
-/metadata               ext4     /dev/block/by-name/metadata                               flags=display=metadata
-/data                   f2fs     /dev/block/bootdevice/by-name/userdata                    flags=display=data
-/mnt/vendor/persist     ext4     /dev/block/bootdevice/by-name/persist                     flags=display=persist
-/mnt/vendor/efs         ext4     /dev/block/bootdevice/by-name/efs                         flags=display=efs
-/efs                    ext4     /dev/block/bootdevice/by-name/sec_efs                     flags=display=efs
-/misc                   emmc     /dev/block/bootdevice/by-name/misc                        flags=display=misc
-:auto                   vfat     /devices/platform/soc/4784000.sdhci/mmc_host*             flags=display=MicroSD
-:auto                   auto     /devices/platform/soc/.ssusb/.dwc3/xhci-hcd..auto     flags=display=USB-OTG
+#
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 GTA4L OrangeFox contributors
+#
+# Recovery-format fstab for Samsung Galaxy Tab A7 LTE (SM-T505 / gta4l).
+# Partition paths and filesystem types are based on the fstab recovered from
+# the LineageOS 20261004 boot/recovery ramdisks and the existing gta4l TWRP
+# tree. Flags below use TWRP/OrangeFox syntax, not Android fs_mgr syntax.
+
+# Boot images
+/boot                   emmc     /dev/block/bootdevice/by-name/boot                        flags=display="Boot";backup=1;flashimg=1
+/recovery               emmc     /dev/block/bootdevice/by-name/recovery                    flags=display="Recovery";backup=1;flashimg=1
+/misc                   emmc     /dev/block/bootdevice/by-name/misc                        flags=display="Misc"
+
+# Dynamic logical partitions
+/system                 ext4     system                                                    flags=display="System";logical;backup=1;wipeingui
+/system                 f2fs     system                                                    flags=display="System";logical;backup=1;wipeingui
+/product                ext4     product                                                   flags=display="Product";logical;backup=1;wipeingui
+/vendor                 ext4     vendor                                                    flags=display="Vendor";logical;backup=1;wipeingui
+/odm                    ext4     odm                                                       flags=display="ODM";logical;backup=1;wipeingui
+
+# Physical ext4 partitions
+/prism                  ext4     /dev/block/platform/soc/4744000.sdhci/by-name/prism       flags=display="Prism"
+/optics                 ext4     /dev/block/platform/soc/4744000.sdhci/by-name/optics      flags=display="Optics"
+/cache                  ext4     /dev/block/bootdevice/by-name/cache                       flags=display="Cache";backup=1;wipeingui
+/metadata               ext4     /dev/block/by-name/metadata                               flags=display="Metadata"
+/data                   f2fs     /dev/block/bootdevice/by-name/userdata                    flags=display="Data";backup=1;wipeingui;fileencryption=ice:aes-256-cts
+/mnt/vendor/persist     ext4     /dev/block/bootdevice/by-name/persist                     flags=display="Persist";backup=1
+/mnt/vendor/efs         ext4     /dev/block/bootdevice/by-name/efs                         flags=display="EFS";backup=1
+/efs                    ext4     /dev/block/bootdevice/by-name/sec_efs                     flags=display="EFS";backup=1
+
+# Removable storage device paths are taken from the recovered Android fstab.
+auto                    vfat     /devices/platform/soc/4784000.sdhci/mmc_host*             flags=display="MicroSD";storage;removable
+auto                    auto     /devices/platform/soc/*.ssusb/*.dwc3/xhci-hcd.*.auto*     flags=display="USB-OTG";storage;removable
