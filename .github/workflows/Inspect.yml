@@ -1,0 +1,133 @@
+name: Inspect gta4l Boot and Recovery Images
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/inspect.yml"
+      - "tools/inspect_android_images.py"
+      - "device-tree/BoardConfig.mk"
+      - "device-tree/recovery.fstab"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gta4l-image-inspection
+  cancel-in-progress: true
+
+jobs:
+  inspect-images:
+    name: Download and inspect Android images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE_URL: https://mirrorbits.lineageos.org/full/gta4l/20261004
+      OUT: ${{ github.workspace }}/inspection-results
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install inspection tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl file binutils device-tree-compiler python3
+
+      - name: Prepare output directories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$OUT"/{downloads,kernel,ramdisk,dtb,dtbo,metadata,logs}
+          {
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Commit: $GITHUB_SHA"
+            echo "Workflow run: $GITHUB_RUN_ID"
+            echo "Image source: $BASE_URL"
+            date -u
+          } > "$OUT/metadata/run-info.txt"
+
+      - name: Download boot and recovery images
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for image in boot.img recovery.img; do
+            curl --fail --location --retry 5 --retry-delay 3 \
+              --connect-timeout 30 --max-time 600 \
+              --output "$OUT/downloads/$image" "$BASE_URL/$image"
+            test -s "$OUT/downloads/$image"
+          done
+          cd "$OUT/downloads"
+          sha256sum boot.img recovery.img | tee ../metadata/sha256sums.txt
+          stat -c '%n %s bytes' boot.img recovery.img > ../metadata/image-sizes.txt
+          file boot.img recovery.img > ../metadata/file-identification.txt
+
+      - name: Parse headers and extract ramdisks, DTBs and recovery DTBO
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/inspect_android_images.py "$OUT/downloads" "$OUT"
+
+      - name: Decode DTBs and DTBO overlays
+        shell: bash
+        run: |
+          set -u
+          : > "$OUT/metadata/device-tree-decode.log"
+          for kind in dtb dtbo; do
+            for blob in "$OUT/$kind"/*.dtb "$OUT/$kind"/*.dtbo; do
+              [ -f "$blob" ] || continue
+              base="$(basename "$blob")"
+              if dtc -I dtb -O dts "$blob" \
+                  -o "$OUT/$kind/$base.dts" \
+                  2> "$OUT/$kind/$base.dtc.log"; then
+                echo "OK $blob" >> "$OUT/metadata/device-tree-decode.log"
+              else
+                echo "WARN could not decode $blob; see $kind/$base.dtc.log" \
+                  >> "$OUT/metadata/device-tree-decode.log"
+              fi
+            done
+          done
+          grep -RInaE 'model =|compatible =|qcom,board-id|qcom,msm-id|board-id|msm-id' \
+            "$OUT/dtb" --include='*.dts' \
+            > "$OUT/metadata/dtb-identification.txt" || true
+
+      - name: Extract relevant recovery configuration into the log
+        shell: bash
+        run: |
+          set -u
+          cat "$OUT/metadata/summary.txt"
+          cat "$OUT/metadata/recovery-config-files.txt"
+          cat "$OUT/metadata/device-tree-decode.log"
+
+      - name: Create file inventory
+        shell: bash
+        run: |
+          set -u
+          find "$OUT" -type f -printf '%P\t%s bytes\n' | sort \
+            > "$OUT/metadata/file-inventory.txt"
+
+      - name: Package inspection results
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          if [ -d "$OUT" ]; then
+            tar -czf "$RUNNER_TEMP/gta4l-image-inspection.tar.gz" \
+              --exclude='inspection-results/downloads/*.img' \
+              -C "$GITHUB_WORKSPACE" inspection-results
+            sha256sum "$RUNNER_TEMP/gta4l-image-inspection.tar.gz" \
+              > "$RUNNER_TEMP/gta4l-image-inspection.tar.gz.sha256"
+          fi
+
+      - name: Upload inspection artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta4l-image-inspection-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/gta4l-image-inspection.tar.gz
+            ${{ runner.temp }}/gta4l-image-inspection.tar.gz.sha256
+          if-no-files-found: warn
+          retention-days: 14
