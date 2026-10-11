@@ -1,0 +1,424 @@
+name: Inspect gta4l Boot and Recovery Images
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/inspect-gta4l-images.yml"
+permissions:
+  contents: read
+concurrency:
+  group: gta4l-image-inspection
+  cancel-in-progress: true
+jobs:
+  inspect-images:
+    name: Download and inspect Android images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE_URL: https://mirrorbits.lineageos.org/full/gta4l/20261004
+      OUT: ${{ github.workspace }}/inspection-results
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install inspection tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            file curl wget \
+            python3 python3-pip \
+            git unzip xz-utils \
+            device-tree-compiler \
+            lz4 cpio \
+            binutils \
+            liblz4-tool
+      - name: Install Android image inspection tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/bin"
+          # Try to obtain Android boot image utilities.
+          git clone --depth=1 \
+            https://github.com/osm0sis/Android-Image-Kitchen.git \
+            "$RUNNER_TEMP/AIK" || true
+          if [ -d "$RUNNER_TEMP/AIK" ]; then
+            find "$RUNNER_TEMP/AIK" -maxdepth 2 -type f \
+              -printf '%p\n' \
+              > "$OUT/aik-files.txt" 2>/dev/null || true
+          fi
+          # Install Python libraries useful for binary analysis.
+          python3 -m pip install --user --break-system-packages \
+            pycryptodome \
+            construct \
+            || true
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Prepare output directories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$OUT"/{downloads,boot,recovery,tools,metadata,dtb,ramdisk,logs}
+          {
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Commit: $GITHUB_SHA"
+            echo "Workflow run: $GITHUB_RUN_ID"
+            echo "Runner: $RUNNER_OS"
+            echo "Image source: $BASE_URL"
+            date -u
+          } > "$OUT/metadata/run-info.txt"
+      - name: Download boot and recovery images
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for image in boot.img recovery.img; do
+            curl \
+              --fail \
+              --location \
+              --retry 5 \
+              --retry-delay 3 \
+              --connect-timeout 30 \
+              --max-time 600 \
+              --output "$OUT/downloads/$image" \
+              "$BASE_URL/$image"
+            test -s "$OUT/downloads/$image"
+          done
+          cd "$OUT/downloads"
+          sha256sum boot.img recovery.img \
+            | tee ../metadata/sha256sums.txt
+          stat boot.img recovery.img \
+            > ../metadata/image-sizes.txt
+          file boot.img recovery.img \
+            > ../metadata/file-identification.txt
+      - name: Record Android image tools
+        shell: bash
+        run: |
+          set -u
+          {
+            for tool in \
+              file sha256sum od xxd strings \
+              unpackbootimg magiskboot mkbootimg \
+              lz4 gzip xz zstd cpio \
+              dtc fdtdump fdtget \
+              avbtool simg2img \
+              python3; do
+              if command -v "$tool" >/dev/null 2>&1; then
+                printf '%-20s %s\n' "$tool" \
+                  "$(command -v "$tool")"
+              else
+                printf '%-20s NOT FOUND\n' "$tool"
+              fi
+            done
+          } > "$OUT/tools/available-tools.txt"
+      - name: Inspect Android boot headers and binary markers
+        shell: bash
+        run: |
+          set -u
+          python3 - "$OUT" <<'PY'
+          import hashlib
+          import json
+          import struct
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          output = root / "metadata" / "boot-header-analysis.json"
+          results = {}
+          def u32(data, offset):
+              if offset + 4 > len(data):
+                  return None
+              return struct.unpack_from("<I", data, offset)[0]
+          def u64(data, offset):
+              if offset + 8 > len(data):
+                  return None
+              return struct.unpack_from("<Q", data, offset)[0]
+          markers = [
+              b"ANDROID!",
+              b"VNDRBOOT",
+              b"AVB0",
+              b"QCDT",
+              b"DTBO",
+              b"SEANDROIDENFORCE",
+              b"070701",
+              b"070702",
+              b"EFI PART",
+          ]
+          for name in ("boot.img", "recovery.img"):
+              path = root / "downloads" / name
+              data = path.read_bytes()
+              item = {
+                  "filename": name,
+                  "size_bytes": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+                  "first_64_bytes_hex": data[:64].hex(" "),
+                  "markers": {},
+              }
+              for marker in markers:
+                  positions = []
+                  start = 0
+                  while True:
+                      pos = data.find(marker, start)
+                      if pos < 0:
+                          break
+                      positions.append(pos)
+                      start = pos + 1
+                  item["markers"][marker.decode("ascii")] = positions
+              # Android legacy boot header v0-v2 common fields.
+              if data.startswith(b"ANDROID!") and len(data) >= 44:
+                  item["legacy_header"] = {
+                      "kernel_size": u32(data, 8),
+                      "kernel_addr": hex(u32(data, 12) or 0),
+                      "ramdisk_size": u32(data, 16),
+                      "ramdisk_addr": hex(u32(data, 20) or 0),
+                      "second_size": u32(data, 24),
+                      "second_addr": hex(u32(data, 28) or 0),
+                      "tags_addr": hex(u32(data, 32) or 0),
+                      "page_size": u32(data, 36),
+                      "header_version": u32(data, 40),
+                      "os_version_field": hex(u32(data, 44) or 0),
+                  }
+                  version = u32(data, 40)
+                  if version is not None and version <= 2:
+                      page = u32(data, 36)
+                      kernel_size = u32(data, 8)
+                      ramdisk_size = u32(data, 16)
+                      second_size = u32(data, 24)
+                      if page and page > 0 and kernel_size is not None:
+                          kernel_offset = page
+                          ramdisk_offset = (
+                              kernel_offset +
+                              ((kernel_size + page - 1) // page) * page
+                          )
+                          second_offset = (
+                              ramdisk_offset +
+                              ((ramdisk_size + page - 1) // page) * page
+                          )
+                          item["legacy_payload_offsets"] = {
+                              "kernel_offset": kernel_offset,
+                              "ramdisk_offset": ramdisk_offset,
+                              "second_offset": second_offset,
+                          }
+                          if kernel_offset + kernel_size <= len(data):
+                              kernel = data[
+                                  kernel_offset:kernel_offset + kernel_size
+                              ]
+                              item["kernel_payload"] = {
+                                  "offset": kernel_offset,
+                                  "size": len(kernel),
+                                  "sha256": hashlib.sha256(kernel).hexdigest(),
+                                  "starts_with_hex": kernel[:16].hex(" "),
+                                  "starts_with_gzip": kernel.startswith(b"\x1f\x8b"),
+                                  "starts_with_lz4": kernel.startswith(b"\x02\x21\x4c\x18"),
+                                  "starts_with_arm64_image_magic": (
+                                      len(kernel) >= 0x3c and
+                                      kernel[0x38:0x3c] == b"ARM\\x64"
+                                  ),
+                              }
+              results[name] = item
+          output.write_text(json.dumps(results, indent=2))
+          print(output.read_text())
+          PY
+      - name: Run unpackbootimg when available
+        shell: bash
+        run: |
+          set +e
+          if ! command -v unpackbootimg >/dev/null 2>&1; then
+            echo "unpackbootimg is unavailable; header analysis remains available." \
+              > "$OUT/logs/unpackbootimg-status.txt"
+            exit 0
+          fi
+          for image in boot recovery; do
+            mkdir -p "$OUT/$image/unpacked"
+            unpackbootimg \
+              -i "$OUT/downloads/$image.img" \
+              -o "$OUT/$image/unpacked" \
+              > "$OUT/logs/${image}-unpackbootimg.log" 2>&1
+            echo "unpackbootimg exit code: $?" \
+              >> "$OUT/logs/${image}-unpackbootimg.log"
+          done
+      - name: Extract Android Image Kitchen tools and unpack images if possible
+        shell: bash
+        run: |
+          set +e
+          AIK="$RUNNER_TEMP/AIK"
+          if [ ! -d "$AIK" ]; then
+            echo "Android Image Kitchen was not downloaded." \
+              > "$OUT/logs/aik-status.txt"
+            exit 0
+          fi
+          find "$AIK" -maxdepth 3 -type f \
+            \( -name 'unpackimg.sh' -o -name 'magiskboot' \) \
+            -print > "$OUT/logs/aik-tool-paths.txt"
+          UNPACKER="$(find "$AIK" -maxdepth 3 -type f \
+            -name 'unpackimg.sh' -print -quit)"
+          if [ -z "$UNPACKER" ]; then
+            echo "No unpackimg.sh found." \
+              > "$OUT/logs/aik-status.txt"
+            exit 0
+          fi
+          for image in boot recovery; do
+            DEST="$OUT/$image/aik"
+            mkdir -p "$DEST"
+            cp "$OUT/downloads/$image.img" "$DEST/image.img"
+            (
+              cd "$DEST"
+              bash "$UNPACKER" image.img
+            ) > "$OUT/logs/${image}-aik.log" 2>&1
+            echo "AIK exit code: $?" \
+              >> "$OUT/logs/${image}-aik.log"
+          done
+      - name: Extract and inspect device-tree blobs
+        shell: bash
+        run: |
+          set +e
+          python3 - "$OUT" <<'PY'
+          import struct
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          magic = b"\xd0\x0d\xfe\xed"
+          report = root / "dtb" / "dtb-scan.txt"
+          def scan(path):
+              data = path.read_bytes()
+              results = []
+              start = 0
+              while True:
+                  pos = data.find(magic, start)
+                  if pos < 0:
+                      break
+                  start = pos + 1
+                  if pos + 8 > len(data):
+                      continue
+                  total = struct.unpack_from(">I", data, pos + 4)[0]
+                  if total < 40 or total > len(data) - pos:
+                      continue
+                  results.append((pos, total))
+              return data, results
+          with report.open("w") as out:
+              for path in (root / "downloads").glob("*.img"):
+                  data, blobs = scan(path)
+                  out.write(f"IMAGE {path.name} size={len(data)}\n")
+                  if not blobs:
+                      out.write("  No validated FDT header found.\n")
+                  for index, (offset, size) in enumerate(blobs):
+                      dest = (
+                          root / "dtb" /
+                          f"{path.stem}-dtb-{index:03d}.dtb"
+                      )
+                      dest.write_bytes(data[offset:offset + size])
+                      out.write(
+                          f"  DTB offset=0x{offset:x} "
+                          f"size={size} output={dest.name}\n"
+                      )
+              out.write("\nRecursive scan of unpacked files:\n")
+              for path in root.rglob("*"):
+                  if not path.is_file():
+                      continue
+                  if root / "dtb" in path.parents:
+                      continue
+                  try:
+                      data, blobs = scan(path)
+                  except (OSError, ValueError):
+                      continue
+                  if blobs:
+                      out.write(f"\nFILE {path.relative_to(root)}\n")
+                      for index, (offset, size) in enumerate(blobs):
+                          dest = (
+                              root / "dtb" /
+                              f"{path.name}-dtb-{index:03d}.dtb"
+                          )
+                          dest.write_bytes(data[offset:offset + size])
+                          out.write(
+                              f"  offset=0x{offset:x} size={size} "
+                              f"output={dest.name}\n"
+                          )
+          PY
+          # Decode extracted DTBs where possible.
+          for dtb in "$OUT"/dtb/*.dtb; do
+            [ -f "$dtb" ] || continue
+            if command -v fdtdump >/dev/null 2>&1; then
+              fdtdump "$dtb" \
+                > "$OUT/dtb/$(basename "$dtb").txt" 2>&1
+            fi
+            if command -v dtc >/dev/null 2>&1; then
+              dtc -I dtb -O dts "$dtb" \
+                -o "$OUT/dtb/$(basename "$dtb").dts" \
+                2> "$OUT/dtb/$(basename "$dtb").dtc.log"
+            fi
+          done
+      - name: Search ramdisks and extracted files for recovery configuration
+        shell: bash
+        run: |
+          set +e
+          SEARCH_ROOTS=(
+            "$OUT/boot"
+            "$OUT/recovery"
+          )
+          {
+            echo "Recovery and filesystem configuration search"
+            echo "=============================================="
+            for root in "${SEARCH_ROOTS[@]}"; do
+              [ -d "$root" ] || continue
+              echo
+              echo "=== $root ==="
+              find "$root" -type f \
+                \( -iname '*fstab*' \
+                   -o -iname '*init*.rc' \
+                   -o -iname '*recovery*' \
+                   -o -iname '*prop' \
+                   -o -iname '*cmdline*' \
+                   -o -iname '*ramdisk*' \) \
+                -print
+              echo
+              grep -RInaE \
+                'fileencryption|metadata_encryption|avb|verity|logical|slotselect|recovery|userdata|/data|/system|/vendor|/product|/metadata|/efs|/persist|by-name|androidboot\.' \
+                "$root" \
+                --exclude='*.img' \
+                --exclude='*.dtb' \
+                --exclude='*.dtbo' \
+                2>/dev/null
+            done
+          } > "$OUT/ramdisk/recovery-config-search.txt"
+      - name: Inspect image strings
+        shell: bash
+        run: |
+          set +e
+          for image in boot recovery; do
+            strings -a -n 6 "$OUT/downloads/$image.img" \
+              > "$OUT/metadata/${image}-strings.txt"
+            grep -iE \
+              'androidboot\.|console=|earlycon=|fstab|recovery|verity|avb|dtb|dtbo|userdata|fileencryption|metadata_encryption|SEANDROIDENFORCE' \
+              "$OUT/metadata/${image}-strings.txt" \
+              > "$OUT/metadata/${image}-relevant-strings.txt" \
+              || true
+          done
+      - name: Create complete file inventory
+        shell: bash
+        run: |
+          set -u
+          find "$OUT" -type f \
+            -printf '%P\t%s bytes\n' \
+            | sort > "$OUT/metadata/file-inventory.txt"
+      - name: Package inspection results
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [ -d "$OUT" ]; then
+            tar -czf \
+              "${RUNNER_TEMP}/gta4l-image-inspection.tar.gz" \
+              -C "$(dirname "$OUT")" \
+              "$(basename "$OUT")"
+            sha256sum \
+              "${RUNNER_TEMP}/gta4l-image-inspection.tar.gz" \
+              > "${RUNNER_TEMP}/gta4l-image-inspection.tar.gz.sha256"
+          fi
+      - name: Upload inspection report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta4l-image-inspection-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/gta4l-image-inspection.tar.gz
+            ${{ runner.temp }}/gta4l-image-inspection.tar.gz.sha256
+            ${{ github.workspace }}/inspection-results/
+          if-no-files-found: warn
+          retention-days: 14
