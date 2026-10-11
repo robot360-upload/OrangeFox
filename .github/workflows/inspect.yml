@@ -347,18 +347,31 @@ jobs:
       - name: Search ramdisks and extracted files for recovery configuration
         shell: bash
         run: |
-          set +e
+          set -u
+
           SEARCH_ROOTS=(
             "$OUT/boot"
             "$OUT/recovery"
           )
+
+          REPORT="$OUT/ramdisk/recovery-config-search.txt"
+          mkdir -p "$(dirname "$REPORT")"
+
           {
             echo "Recovery and filesystem configuration search"
             echo "=============================================="
+
             for root in "${SEARCH_ROOTS[@]}"; do
-              [ -d "$root" ] || continue
               echo
               echo "=== $root ==="
+
+              if [ ! -d "$root" ]; then
+                echo "Directory not found."
+                continue
+              fi
+
+              echo "--- Relevant filenames ---"
+
               find "$root" -type f \
                 \( -iname '*fstab*' \
                    -o -iname '*init*.rc' \
@@ -366,17 +379,23 @@ jobs:
                    -o -iname '*prop' \
                    -o -iname '*cmdline*' \
                    -o -iname '*ramdisk*' \) \
-                -print
+                -print || true
+
               echo
+              echo "--- Relevant configuration contents ---"
+
               grep -RInaE \
                 'fileencryption|metadata_encryption|avb|verity|logical|slotselect|recovery|userdata|/data|/system|/vendor|/product|/metadata|/efs|/persist|by-name|androidboot\.' \
                 "$root" \
                 --exclude='*.img' \
                 --exclude='*.dtb' \
                 --exclude='*.dtbo' \
-                2>/dev/null
+                2>/dev/null || true
             done
-          } > "$OUT/ramdisk/recovery-config-search.txt"
+          } > "$REPORT"
+
+          cat "$REPORT"
+          echo "Configuration search completed."
       - name: Inspect image strings
         shell: bash
         run: |
